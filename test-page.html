@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>模拟目标站点</title>
+</head>
+<body>
+  <div id="offline-banner" hidden>
+    ⚠ 当前处于离线模式：<span id="fail-count">0</span> 个资源加载失败，
+    页面已降级（显示缓存内容或占位符）。
+  </div>
+
+  <header class="site-header">
+    <h1>📰 模拟目标站点</h1>
+    <p class="tagline">通过 Service Worker 模拟弱网加载本页</p>
+  </header>
+
+  <main id="content">
+    <section id="gallery" class="gallery"><!-- 图片由 JS 注入 --></section>
+    <section id="api-data" class="api-data"><h2>接口数据</h2><pre id="api-out">加载中…</pre></section>
+  </main>
+
+  <footer id="page-stats"></footer>
+
+  <!-- 引导脚本：解析 run 参数，再动态注入全部资源，
+       保证每个资源 URL 都带 sim=1&run=N（SW 据此拦截与归组） -->
+  <script>
+    (function () {
+      var run = new URLSearchParams(location.search).get('run') || '0';
+      window.__RUN__ = run;
+      window.__SIM_BASE__ = 'sim=1&run=' + encodeURIComponent(run);
+      var s = document.createElement('script');
+      s.src = 'js/test-page.js?' + window.__SIM_BASE__;
+      document.head.appendChild(s);
+    })();
+  </script>
+</body>
+</html>

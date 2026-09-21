@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>弱网模拟器 · Service Worker 网络节流与请求瀑布</title>
+<link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+  <header class="app-header">
+    <h1>🌐 弱网模拟器</h1>
+    <span class="subtitle">Service Worker 节流 · Performance API 计时 · Canvas 瀑布</span>
+    <span id="sw-status" class="badge badge-warn">SW 初始化中…</span>
+  </header>
+
+  <!-- ================= 控制面板 ================= -->
+  <section class="panel controls">
+    <div class="ctl-group">
+      <h3>网络预设</h3>
+      <div class="presets" id="presets">
+        <button data-preset="2g">2G<br><small>250Kbps · 400ms</small></button>
+        <button data-preset="3g">3G<br><small>1.6Mbps · 150ms</small></button>
+        <button data-preset="4g" class="active">4G<br><small>12Mbps · 50ms</small></button>
+        <button data-preset="offline">离线<br><small>全部断网</small></button>
+        <button data-preset="custom">自定义<br><small>手动调参</small></button>
+      </div>
+      <div id="offline-hint" class="offline-hint" hidden>
+        ⚠ 离线模式：所有网络请求都会失败。先用「网络优先 / 缓存优先」运行一次建立缓存，
+        再切到离线即可看到缓存降级效果。
+      </div>
+    </div>
+
+    <div class="ctl-group">
+      <h3>自定义参数</h3>
+      <label>带宽 <output id="o-bw">12000</output> Kbps
+        <input type="range" id="in-bw" min="50" max="50000" step="50" value="12000">
+      </label>
+      <label>延迟 <output id="o-lat">50</output> ms
+        <input type="range" id="in-lat" min="0" max="2000" step="10" value="50">
+      </label>
+      <label>丢包率 <output id="o-loss">0</output> %
+        <input type="range" id="in-loss" min="0" max="50" step="1" value="0">
+      </label>
+    </div>
+
+    <div class="ctl-group">
+      <h3>缓存策略</h3>
+      <select id="cache-strategy">
+        <option value="network-only">network-only（不缓存）</option>
+        <option value="cache-first">cache-first（缓存优先）</option>
+        <option value="network-first">network-first（网络优先，失败回退缓存）</option>
+        <option value="stale-while-revalidate">stale-while-revalidate</option>
+      </select>
+      <p class="hint">提示：选缓存策略后连跑两次，第二次应全部缓存命中（绿色）。</p>
+      <div class="btn-row">
+        <button id="btn-clear-cache" class="btn-secondary">清除 SW 缓存</button>
+      </div>
+    </div>
+
+    <div class="ctl-group">
+      <h3>运行</h3>
+      <button id="btn-run" class="btn-primary">▶ 运行测试</button>
+      <div class="btn-row">
+        <button id="btn-compare" class="btn-secondary" disabled>对比选中运行</button>
+        <button id="btn-single" class="btn-secondary" hidden>返回单次视图</button>
+      </div>
+      <p class="hint">在下方历史记录勾选两次运行后可对比瀑布。</p>
+    </div>
+  </section>
+
+  <!-- ================= 统计条 ================= -->
+  <section id="stats" class="panel stats" hidden>
+    <div class="stat"><span class="stat-label">总耗时</span><span id="st-time" class="stat-value">-</span></div>
+    <div class="stat"><span class="stat-label">资源数</span><span id="st-count" class="stat-value">-</span></div>
+    <div class="stat"><span class="stat-label">传输量</span><span id="st-bytes" class="stat-value">-</span></div>
+    <div class="stat"><span class="stat-label">缓存命中</span><span id="st-cache" class="stat-value">-</span></div>
+    <div class="stat"><span class="stat-label">重传</span><span id="st-retx" class="stat-value">-</span></div>
+    <div class="stat"><span class="stat-label">失败</span><span id="st-fail" class="stat-value">-</span></div>
+  </section>
+
+  <!-- ================= 主区域：瀑布 + 页面预览 ================= -->
+  <main class="main-grid">
+    <section class="panel waterfall-panel">
+      <div class="panel-head">
+        <h3>请求瀑布 <span id="wf-title" class="wf-title"></span></h3>
+        <div class="legend">
+          <span><i class="lg lg-lat"></i>等待</span>
+          <span><i class="lg lg-dl"></i>下载</span>
+          <span><i class="lg lg-cache"></i>缓存</span>
+          <span><i class="lg lg-fail"></i>失败</span>
+          <span class="lg-b" hidden id="lg-b"><i class="lg lg-dlb"></i>对比运行</span>
+        </div>
+      </div>
+      <div class="canvas-wrap" id="canvas-wrap">
+        <canvas id="waterfall"></canvas>
+        <div id="tooltip" class="tooltip" hidden></div>
+        <div id="wf-empty" class="wf-empty">点击「运行测试」生成瀑布图</div>
+      </div>
+    </section>
+
+    <section class="panel preview-panel">
+      <div class="panel-head"><h3>目标页面预览（iframe 内真实加载）</h3></div>
+      <iframe id="preview" title="测试页面"></iframe>
+    </section>
+  </main>
+
+  <!-- ================= 运行历史 / 对比 ================= -->
+  <section class="panel history-panel">
+    <div class="panel-head"><h3>运行历史（勾选两次运行进行对比）</h3></div>
+    <table id="history-table">
+      <thead>
+        <tr>
+          <th></th><th>#</th><th>网络</th><th>缓存策略</th>
+          <th>总耗时</th><th>传输量</th><th>缓存命中</th><th>失败</th><th>操作</th>
+        </tr>
+      </thead>
+      <tbody><tr class="empty-row"><td colspan="9">暂无运行记录</td></tr></tbody>
+    </table>
+  </section>
+
+  <script src="js/waterfall.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
