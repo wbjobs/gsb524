@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Service Worker 网络实验室</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">Service Worker · Performance API · Canvas</p>
+      <h1>网络条件与缓存策略实验室</h1>
+      <p>在浏览器内模拟 2G、3G、4G、自定义带宽、延迟、丢包、断网，并可视化请求瀑布。</p>
+    </div>
+    <div id="swStatus" class="status-pill waiting">Service Worker 初始化中…</div>
+  </header>
+
+  <main class="layout">
+    <section class="panel controls" aria-label="网络配置">
+      <h2>模拟条件</h2>
+      <div class="control-grid">
+        <label>
+          网络预设
+          <select id="profileSelect">
+            <option value="2g">2G EDGE（50 kbps / 400 ms / 8%）</option>
+            <option value="3g" selected>3G Fast（1.5 Mbps / 120 ms / 1%）</option>
+            <option value="4g">4G（9 Mbps / 35 ms / 0%）</option>
+            <option value="wifi">Wi-Fi（30 Mbps / 8 ms / 0%）</option>
+            <option value="custom">自定义</option>
+          </select>
+        </label>
+        <label>
+          带宽（kbps）
+          <input id="bandwidthInput" type="number" min="1" max="100000" step="1" value="1500">
+        </label>
+        <label>
+          单向延迟（ms）
+          <input id="latencyInput" type="number" min="0" max="10000" step="1" value="120">
+        </label>
+        <label>
+          丢包率（%）
+          <input id="lossInput" type="number" min="0" max="100" step="0.1" value="1">
+        </label>
+        <label>
+          缓存策略
+          <select id="strategySelect">
+            <option value="network-only" selected>network-only：无缓存，适合看纯网络</option>
+            <option value="cache-first">cache-first：二次访问几乎瞬时</option>
+            <option value="network-first">network-first：联网取新，离线降级</option>
+            <option value="stale-while-revalidate">stale-while-revalidate：先旧后新</option>
+            <option value="cache-only">cache-only：只从缓存读取</option>
+          </select>
+        </label>
+        <label class="check-control">
+          <input id="cyclesToggle" type="checkbox" checked>
+          连续运行冷/热两轮
+        </label>
+      </div>
+      <div class="toggle-row">
+        <label class="offline-control">
+          <input id="offlineToggle" type="checkbox">
+          模拟断网
+        </label>
+      </div>
+      <div class="button-row">
+        <button id="applyButton" class="primary">应用网络</button>
+        <button id="runButton" class="primary">重新加载页面</button>
+        <button id="batchButton">对比 2G / 3G / 4G</button>
+        <button id="bypassButton">缓存绕过探测</button>
+        <button id="snapshotButton">保存当前结果</button>
+        <button id="clearSnapshotsButton" class="ghost">清空对比</button>
+      </div>
+      <div id="offlineBanner" class="offline-banner" hidden>当前为断网模式：页面已展示 Service Worker 降级提示，缓存策略决定是否仍可加载资源。</div>
+      <p id="runState" class="run-state">就绪。所有模拟只拦截 <code>/demo/</code> 路径。</p>
+    </section>
+
+    <section class="panel metrics-panel" aria-label="汇总指标">
+      <h2>加载指标</h2>
+      <div id="summaryCards" class="summary-grid"></div>
+    </section>
+
+    <section class="panel waterfall-panel" aria-label="请求瀑布图">
+      <div class="section-title-row">
+        <div>
+          <h2>请求瀑布</h2>
+          <p>时间以 Service Worker 观测到的第一个请求为零点。</p>
+        </div>
+        <div id="waterfallLegend" class="legend"></div>
+      </div>
+      <canvas id="waterfallCanvas"></canvas>
+      <div id="tooltip" class="tooltip" hidden></div>
+    </section>
+
+    <section class="panel compare-panel" aria-label="性能对比">
+      <div class="section-title-row">
+        <div>
+          <h2>网络 / 缓存对比</h2>
+          <p>保存多次运行，比较总加载时间、首字节、DOMContentLoaded、onload 和传输量。</p>
+        </div>
+      </div>
+      <canvas id="compareCanvas"></canvas>
+      <div class="table-wrap">
+        <table id="compareTable">
+          <thead>
+            <tr>
+              <th>结果</th><th>策略</th><th>轮次</th><th>总耗时</th><th>TTFB</th>
+              <th>DCL</th><th>onload</th><th>传输</th><th>缓存命中</th><th>操作</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel validation-panel" aria-label="时序校验">
+      <h2>Performance API 校验</h2>
+      <p>主瀑布以 SW 内部事件为权威时序；下表对照 Resource Timing 的持续时间和传输大小。</p>
+      <div class="table-wrap">
+        <table id="timingTable">
+          <thead>
+            <tr>
+              <th>资源</th><th>SW 耗时</th><th>Resource Timing</th><th>差值</th><th>SW 大小</th><th>Resource 大小</th><th>缓存状态</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel preview-panel" aria-label="被测试页面">
+      <h2>被测页面</h2>
+      <iframe id="demoFrame" title="受 Service Worker 控制的演示页面"></iframe>
+    </section>
+  </main>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>
